@@ -1,0 +1,39 @@
+# 截屏翻译工具 —— 运行依赖
+#
+# 安装：py -3 -m pip install -r requirements.txt
+
+# 截屏与图像处理
+Pillow>=12.0
+mss>=10.0
+numpy>=2.0
+
+# OCR 主引擎（PaddleOCR 模型转 ONNX，CPU 推理，中文质量好）
+rapidocr-onnxruntime>=1.2.3
+onnxruntime>=1.30.0
+
+# 离线翻译：只依赖这两个轻量库
+# ⚠️ 刻意不使用 argostranslate 库——它会拖起 torch+spacy+stanza（1GB+），
+#    且其 import 会创建 ~/.local 目录（本机实测直接 PermissionError 崩溃）。
+#    这里直接复刻其核心：sentencepiece 分词 → ctranslate2 翻译 → decode。
+ctranslate2>=4.8.0
+sentencepiece>=0.2.0
+
+# 在线翻译
+requests>=2.34.0
+
+# 全局热键与剪贴板
+keyboard>=0.13.5
+pyperclip>=1.11.0
+
+# 系统托盘常驻（关闭主窗口时收进托盘，而不是退出）
+pystray>=0.19.5
+
+# ---- 可选：Windows 内置 OCR 备选引擎 ----
+# 若不使用 OCR 引擎里的 "windows" 选项，可不装。
+# winrt-runtime>=3.2.1
+# winrt-Windows.Media.Ocr>=3.2.1
+# winrt-Windows.Graphics.Imaging>=3.2.1
+# winrt-Windows.Storage.Streams>=3.2.1
+# winrt-Windows.Globalization>=3.2.1
+# winrt-Windows.Foundation>=3.2.1
+# winrt-Windows.Foundation.Collections>=3.2.1

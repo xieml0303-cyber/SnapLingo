@@ -1,0 +1,41 @@
+# ============================================================
+# SnapLingo —— 本仓库只放「功能源码」（主人 2026-10-10 要求）
+# 内部文档（开发记录 / 实施报告 / 探针）一律不入库；
+# 本地文件保留不动，只是不进 git。对外仓库必须始终是「纯代码」。
+# ============================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+venv/
+
+# ---------- 内部文档：绝不入库 ----------
+# 开发记录 / 报告 / 记忆 / 风险扫描 全在 .workbuddy/ 下
+/.workbuddy/
+# 根目录只允许对外 README.md，其余 .md 一律不入库
+/*.md
+!/README.md
+# ZCode 编辑器专用配置 + 本地调试启动脚本
+/.zcodeignore
+/启动-调试.bat
+
+# ---------- 开发探针：不入库 ----------
+# 它们依赖本机 DPI / 窗口坐标，且含本机路径，属开发期工具
+/packaging/probe/
+/packaging/render_card_icons.py
+
+# ---------- 构建产物 ----------
+# PyInstaller 打包出来的 shell 目录 + 生成的安装包，约 42MB
+packaging/build/
+
+# ISCC 的临时输出目录（`cd packaging` 后 `/Obuild_tmp` 是相对当前目录）。
+# ⚠️ 风险扫描 S6：历史上曾把 9.9 MB 的 SnapLingo-Setup-0.1.0.exe 提交进来
+#    （c8d7b2c 加入、0649046 删除），文件虽已从工作树移除，但**永久留在 git 历史**里。
+#    这里补上忽略规则，防止再犯。
+build_tmp/
+packaging/build_tmp/
+
+# 测试用 iss 是派生文件（由 packaging/probe/make_test_iss.py 生成），只提交正式 iss
+packaging/snaplingo_test.iss
