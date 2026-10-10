@@ -47,4 +47,6 @@ packaging/           打包配置（PyInstaller spec + Inno Setup iss）
 
 ## 许可
 
-见 [`assets/license.txt`](assets/license.txt)。
+源码采用 [MIT License](LICENSE)。
+
+安装程序另附最终用户许可协议，见 [`assets/license.txt`](assets/license.txt)。
