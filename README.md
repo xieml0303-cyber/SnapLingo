@@ -16,7 +16,12 @@ Windows 上的**截图 → 文字识别 → 翻译**一条龙工具。按一次�
 - **系统托盘常驻**：关闭主窗口收进托盘，热键随时可用
 - **开机自启**：可在设置窗口里开关
 
-## 运行
+## 下载
+
+预编译的 Windows 安装包（**已内含离线翻译模型，无需 Python 环境**）在
+[Releases](https://github.com/xieml0303-cyber/SnapLingo/releases) 页面下载，双击安装即可。
+
+## 从源码运行
 
 需要 Windows 与 Python 3.10+。
 
