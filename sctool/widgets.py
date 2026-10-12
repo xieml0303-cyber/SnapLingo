@@ -1466,6 +1466,7 @@ class Entry(tk.Canvas):
         )
         self.var = textvariable if textvariable is not None else tk.StringVar()
         self._focus = False
+        self._masked = show is not None
         self._render_bg()
         self.entry = tk.Entry(
             self,
@@ -1489,6 +1490,19 @@ class Entry(tk.Canvas):
         )
         self.entry.bind("<FocusIn>", lambda _e: self._set_focus(True))
         self.entry.bind("<FocusOut>", lambda _e: self._set_focus(False))
+
+    def set_masked(self, masked: bool) -> None:
+        """切换密文 / 明文（配合旁边的小眼睛按钮）。
+
+        ⚠️ 只改底层 `tk.Entry` 的 `show`，**不动 StringVar** —— 内容一字不变，
+           切换时既不丢字符、也不会触发 trace 回调。
+        """
+        self._masked = masked
+        self.entry.configure(show="●" if masked else "")
+
+    @property
+    def masked(self) -> bool:
+        return self._masked
 
     def _set_focus(self, flag: bool) -> None:
         if self._focus != flag:

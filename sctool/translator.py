@@ -278,6 +278,43 @@ class OpenAICompatTranslator:
         return content
 
 
+def list_models(base_url: str, api_key: str = "", timeout: int = 15) -> list[str]:
+    """拉取 OpenAI 兼容接口的模型列表（`GET {base_url}/models`）。
+
+    设置窗口的「检测」按钮用它给模型输入框做候选下拉。
+
+    ⚠️ 这是**网络调用**：调用方必须放到线程里跑，别阻塞 Tk 主循环
+       （否则界面假死，表现成"点了检测没反应"）。
+    """
+    import requests
+
+    base = (base_url or "").strip().rstrip("/")
+    if not base:
+        raise TranslateError("请先填「接口地址」再检测模型")
+
+    headers = {}
+    key = (api_key or "").strip()
+    if key:
+        headers["Authorization"] = "Bearer " + key
+
+    try:
+        resp = requests.get(f"{base}/models", headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        raise TranslateError(f"检测模型失败：{exc}") from exc
+
+    items = payload.get("data") or []
+    names = [
+        str(item.get("id"))
+        for item in items
+        if isinstance(item, dict) and item.get("id")
+    ]
+    if not names:
+        raise TranslateError("接口没有返回任何模型（返回体里没有 data[].id）")
+    return sorted(names)
+
+
 #: 离线翻译器缓存。模型加载约 0.2s，缓存后重复翻译不再重新加载，
 #: 也避免并发翻译时重复占用内存。
 _offline_cache: dict[str, OfflineTranslator] = {}

@@ -218,6 +218,24 @@ def _capture(d, n, c, w):
     _circle(d, 12, 12, 3.4, c, w, n)
 
 
+def _eye(d, n, c, w):
+    """眼睛（明文）—— 设置窗口 API Key 的「显示 / 隐藏」开关。
+
+    眼形用两段**椭圆弧**拼成（正圆看着像齿轮不像眼），瞳孔是一枚实心圆点。
+    """
+    x0, y0 = _pt(2.5, 6.5, n)
+    x1, y1 = _pt(21.5, 17.5, n)
+    d.arc((x0, y0, x1, y1), 180, 360, fill=c, width=w)
+    d.arc((x0, y0, x1, y1), 0, 180, fill=c, width=w)
+    _dot(d, 12, 12, 2.9, c, n)
+
+
+def _eye_off(d, n, c, w):
+    """眼睛 + 斜杠（密文）—— 表示"当前内容不可见"。"""
+    _eye(d, n, c, w)
+    _line(d, [(4.5, 20.0), (19.5, 4.5)], c, w, n)
+
+
 def _settings(d, n, c, w):
     """滑块（两条轨道 + 各一枚滑块）。
 
@@ -350,6 +368,8 @@ _ICONS = {
     "confirm": _confirm,
     "capture": _capture,
     "settings": _settings,
+    "eye": _eye,
+    "eye_off": _eye_off,
     "folder": _folder,
     "log": _log,
     "opacity": _opacity,

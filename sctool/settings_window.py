@@ -22,11 +22,23 @@ from __future__ import annotations
 
 import copy
 import os
+import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
-from . import APP_TITLE, __version__, autostart, icons, models, paths, storage, theme, widgets
+from . import (
+    APP_TITLE,
+    __version__,
+    autostart,
+    icons,
+    models,
+    paths,
+    storage,
+    theme,
+    translator,
+    widgets,
+)
 
 #: 选项值 → 界面文案（顺序必须一一对应）
 OCR_VALUES = ("rapidocr", "windows")
@@ -44,6 +56,153 @@ def _index_of(values: tuple, current) -> int:
         return values.index(current)
     except ValueError:
         return 0
+
+
+class _ModelListPopup:
+    """模型候选下拉表：过滤框 + 可滚动列表，点一项即回填。
+
+    ⚠️ 为什么不用 `tk.Menu`：模型列表可能有几十上百项，`tk.Menu` **不支持滚动**，
+       超出屏幕就只能干瞪眼；而且它的原生样式跟这套圆角界面完全不搭。
+       用无边框 Toplevel 自绘，才能带上过滤框、滚动条与品牌色高亮。
+
+    关闭方式：Esc / 选中一项 / 点到别处（失焦）/ 再点一次「检测」。
+    """
+
+    ROW_H = 24
+    MAX_ROWS = 12
+
+    def __init__(self, parent, anchor, names, on_pick, scale: float) -> None:
+        self._on_pick = on_pick
+        self._names = list(names)
+        self._closed = False
+        self._scale = scale
+
+        top = tk.Toplevel(parent)
+        self.top = top
+        top.withdraw()
+        top.overrideredirect(True)      # 无系统边框
+        top.configure(bg=theme.N200)    # 靠 1px 外框做描边
+        try:
+            top.transient(parent)
+        except tk.TclError:
+            pass
+
+        body = tk.Frame(top, bg=theme.N0)
+        body.pack(fill="both", expand=True, padx=1, pady=1)
+
+        self.filter_var = tk.StringVar()
+        self.entry = tk.Entry(
+            body,
+            textvariable=self.filter_var,
+            font=theme.FONT_BODY,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            bg=theme.N0,
+            fg=theme.N900,
+            insertbackground=theme.B500,
+        )
+        self.entry.pack(
+            fill="x", padx=theme.pxf(scale, 8),
+            pady=(theme.pxf(scale, 6), theme.pxf(scale, 4)),
+        )
+        self.entry.bind("<KeyRelease>", lambda _e: self._refresh())
+        self.entry.bind("<Escape>", lambda _e: self.close())
+        self.entry.bind("<Down>", lambda _e: self.listbox.focus_set())
+
+        wrap = tk.Frame(body, bg=theme.N0)
+        wrap.pack(
+            fill="both", expand=True, padx=theme.pxf(scale, 6),
+            pady=(0, theme.pxf(scale, 6)),
+        )
+        self.listbox = tk.Listbox(
+            wrap,
+            font=theme.FONT_BODY,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            bg=theme.N0,
+            fg=theme.N900,
+            selectbackground=theme.BRAND_SOFT,
+            selectforeground=theme.BRAND_TEXT,
+            activestyle="none",
+            height=min(self.MAX_ROWS, max(1, len(names))),
+        )
+        bar = ttk.Scrollbar(wrap, orient="vertical", command=self.listbox.yview)
+        self.listbox.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.listbox.pack(side="left", fill="both", expand=True)
+        self.listbox.bind("<ButtonRelease-1>", self._pick)
+        self.listbox.bind("<Double-Button-1>", self._pick)
+        self.listbox.bind("<Return>", self._pick)
+        self.listbox.bind("<Escape>", lambda _e: self.close())
+
+        self._refresh()
+        self._place(anchor)
+        top.deiconify()
+        self.entry.focus_set()
+        top.bind("<FocusOut>", lambda _e: top.after(120, self._close_if_unfocused))
+
+    # ---------- 对外 ----------
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass
+
+    # ---------- 内部 ----------
+
+    def _filtered(self) -> list[str]:
+        needle = self.filter_var.get().strip().lower()
+        if not needle:
+            return self._names
+        return [name for name in self._names if needle in name.lower()]
+
+    def _refresh(self) -> None:
+        shown = self._filtered()
+        self.listbox.delete(0, "end")
+        for name in shown:
+            self.listbox.insert("end", name)
+        if shown:
+            self.listbox.selection_set(0)
+            self.listbox.see(0)
+        self.listbox.configure(height=min(self.MAX_ROWS, max(1, len(shown))))
+
+    def _pick(self, _event=None) -> None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        name = self.listbox.get(selection[0])
+        self.close()
+        self._on_pick(name)
+
+    def _close_if_unfocused(self) -> None:
+        if self._closed:
+            return
+        try:
+            focused = self.top.focus_get()
+        except (KeyError, tk.TclError):
+            focused = None
+        if focused is None or not str(focused).startswith(str(self.top)):
+            self.close()
+
+    def _place(self, anchor: tk.Misc) -> None:
+        anchor.update_idletasks()
+        s = self._scale
+        width = max(anchor.winfo_width(), theme.pxf(s, 240))
+        rows = min(self.MAX_ROWS, max(1, len(self._filtered())))
+        height = theme.pxf(s, 34) + rows * self.ROW_H * s + theme.pxf(s, 14)
+
+        x = anchor.winfo_rootx()
+        y = anchor.winfo_rooty() + anchor.winfo_height() + theme.pxf(s, 4)
+        # 贴到屏幕底就往上翻，否则会被裁掉一半
+        if y + height > anchor.winfo_screenheight():
+            y = max(0, anchor.winfo_rooty() - height - theme.pxf(s, 4))
+        self.top.geometry(f"{int(width)}x{int(height)}+{int(x)}+{int(y)}")
 
 
 class SettingsWindow:
@@ -277,20 +436,39 @@ class SettingsWindow:
         self._hint(cell, "仅「在线 / 自动」模式需要")
 
         # ---- OpenAI 兼容那一组（行 4~6）----
+        # 顺序按「URL → Key → 模型」排：「检测模型」要拿前两者去请求，
+        # 顺序跟着使用顺序走，填的时候才顺。
         cell = self._row(grid, 4, "接口地址")
         self.baseurl_var = tk.StringVar(value=section.get("online_base_url", ""))
         widgets.Entry(cell, textvariable=self.baseurl_var, width=260, scale=s).pack(side="left")
         self._hint(cell, "如 http://127.0.0.1:7863/v1")
 
-        cell = self._row(grid, 5, "模型")
-        self.model_var = tk.StringVar(value=section.get("online_model", ""))
-        widgets.Entry(cell, textvariable=self.model_var, width=260, scale=s).pack(side="left")
-        self._hint(cell, "原样传给上游，如 model group")
-
-        cell = self._row(grid, 6, "API Key")
+        cell = self._row(grid, 5, "API Key")
         self.apikey_var = tk.StringVar(value=section.get("online_api_key", ""))
-        widgets.Entry(cell, textvariable=self.apikey_var, width=260, scale=s).pack(side="left")
+        # 默认密文；旁边的小眼睛点一下切明文（见 _toggle_key_mask）
+        self.apikey_entry = widgets.Entry(
+            cell, textvariable=self.apikey_var, width=228, scale=s, show="●"
+        )
+        self.apikey_entry.pack(side="left")
+        self.mask_button = widgets.RoundButton(
+            cell, "", self._toggle_key_mask, variant="ghost", icon="eye_off",
+            icon_size=15, width=int(32 * s), height=int(32 * s), scale=s,
+        )
+        self.mask_button.pack(side="left", padx=(theme.pxf(s, 6), 0))
         self._hint(cell, "本地网关通常可留空")
+
+        cell = self._row(grid, 6, "模型")
+        self.model_var = tk.StringVar(value=section.get("online_model", ""))
+        self.model_entry = widgets.Entry(
+            cell, textvariable=self.model_var, width=180, scale=s
+        )
+        self.model_entry.pack(side="left")
+        self.detect_button = widgets.RoundButton(
+            cell, "检测", self._detect_models, variant="secondary",
+            font=theme.FONT_TIP, pad_x=12, pad_y=6, scale=s,
+        )
+        self.detect_button.pack(side="left", padx=(theme.pxf(s, 6), 0))
+        self._hint(cell, "点「检测」拉取候选列表")
 
         # ---- 有道智云那一组（行 7~8）----
         cell = self._row(grid, 7, "有道 AppKey")
@@ -302,6 +480,7 @@ class SettingsWindow:
         widgets.Entry(cell, textvariable=self.youdao_secret_var, width=260, scale=s).pack(side="left")
 
         self._recognition_grid = grid
+        self._model_popup: _ModelListPopup | None = None
         self._apply_provider_visibility(self.provider_seg.value)
 
     #: 行号 → 属于哪一组（切换在线服务商时决定显示谁）
@@ -336,6 +515,59 @@ class SettingsWindow:
         else:
             label.grid_remove()
             cell.grid_remove()
+
+    # ---------- API Key 显隐 / 模型检测 ----------
+
+    def _toggle_key_mask(self) -> None:
+        """小眼睛：在密文与明文之间切换（**只改显示，内容一字不动**）。"""
+        masked = not self.apikey_entry.masked
+        self.apikey_entry.set_masked(masked)
+        self.mask_button.set_icon("eye_off" if masked else "eye")
+
+    def _detect_models(self) -> None:
+        """点「检测」：在线程里拉模型列表，回来弹下拉表。
+
+        ⚠️ 网络请求**必须**离开主线程，否则 Tk 会假死（界面点不动，表现为
+           "点了检测没反应"）。拉完用 `after(0, …)` 回到主线程再弹窗。
+        """
+        if self._model_popup is not None:
+            # 已经弹着 ⇒ 再点一次当「收起」
+            self._model_popup.close()
+            self._model_popup = None
+            return
+
+        base = self.baseurl_var.get().strip()
+        if not base:
+            messagebox.showwarning(APP_TITLE, "请先填「接口地址」", parent=self.win)
+            return
+
+        key = self.apikey_var.get().strip()
+        self.detect_button.set_text("检测中…")
+        self.detect_button.set_enabled(False)
+
+        def worker() -> None:
+            try:
+                names = translator.list_models(base, key)
+                error: Exception | None = None
+            except Exception as exc:  # noqa: BLE001
+                names, error = [], exc
+            self.win.after(0, lambda: self._on_models(names, error))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_models(self, names: list[str], error: Exception | None) -> None:
+        self.detect_button.set_text("检测")
+        self.detect_button.set_enabled(True)
+        if error is not None:
+            messagebox.showwarning(APP_TITLE, str(error), parent=self.win)
+            return
+        self._model_popup = _ModelListPopup(
+            self.win, self.model_entry, names, self._pick_model, self._s
+        )
+
+    def _pick_model(self, name: str) -> None:
+        self.model_var.set(name)
+        self._model_popup = None
 
     # ---------- 分区：离线模型 ----------
 
