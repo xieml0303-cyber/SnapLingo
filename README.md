@@ -11,7 +11,10 @@ Windows 上的**截图 → 文字识别 → 翻译**一条龙工具。按一次�
 - **全局热键唤出截图**（默认 `Ctrl+D`），框选即识别，无需切窗口
 - **OCR**：RapidOCR（PaddleOCR 模型转 ONNX，CPU 推理，中文识别质量好）
 - **离线翻译**：sentencepiece 分词 + CTranslate2 推理，断网可用
-- **在线翻译**（可选）：有道智云，需自备 AppKey / AppSecret
+- **在线翻译**（可选，两种服务商）：
+  - **有道智云** —— 需自备 AppKey / AppSecret；
+  - **OpenAI 兼容** —— 任何暴露 `/v1/chat/completions` 的服务都能接：
+    自建网关、DeepSeek、Ollama、OpenAI 官方…只需填「接口地址 + 模型名 +（可选）API Key」。
 - **截屏标注**：画笔、色卡、线宽、矩形、箭头，支持撤销
 - **系统托盘常驻**：关闭主窗口收进托盘，热键随时可用
 - **开机自启**：可在设置窗口里开关

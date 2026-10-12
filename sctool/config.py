@@ -11,9 +11,19 @@ DEFAULTS: dict[str, Any] = {
     "hotkey": "ctrl+alt+s",
     "ocr_engine": "rapidocr",  # rapidocr | windows
     "translate": {
-        "mode": "offline",  # offline | online | auto
+        #: offline | online | auto。默认「自动」：先用本地模型，本地不可用才转在线。
+        "mode": "auto",
         "offline_pair": "",  # ""=按文本自动判断 | en_zh | zh_en
-        "online_provider": "youdao",
+        #: 在线服务商：`openai`=任何 OpenAI 兼容接口（默认）| `youdao`=有道智云
+        "online_provider": "openai",
+        # ---- OpenAI 兼容（online_provider == "openai"）----
+        #: 接口地址，填到 `/v1` 为止（如 http://127.0.0.1:7863/v1）
+        "online_base_url": "",
+        #: 模型名。**原样传给上游**，可含空格（如 "model group"）
+        "online_model": "",
+        #: API Key。本地网关通常可留空。
+        "online_api_key": "",
+        # ---- 有道智云（online_provider == "youdao"）----
         "online_app_key": "",
         "online_app_secret": "",
     },

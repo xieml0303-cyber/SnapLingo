@@ -1,4 +1,11 @@
-"""翻译：轻量离线（ctranslate2 + sentencepiece）+ 在线 API（有道）。
+"""翻译：轻量离线（ctranslate2 + sentencepiece）+ 在线 API。
+
+在线支持两种服务商（配置项 `translate.online_provider`）：
+
+* `youdao` —— 有道智云文本翻译，需 AppKey + AppSecret；
+* `openai` —— 任何 **OpenAI 兼容**接口（`/v1/chat/completions`）：
+  自建网关（如 WorkBuddy2API 的模型组）、DeepSeek、Ollama、OpenAI 官方都能接，
+  只需填「接口地址 + 模型名 +（可选）API Key」。
 
 为什么不直接用 argostranslate 库：
   1. 它会拖起 torch + spacy + stanza（1GB+），启动数秒；
@@ -13,6 +20,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 import uuid
@@ -185,6 +193,91 @@ class YoudaoTranslator:
         return "\n".join(translations)
 
 
+#: 语言代码 → 提示词里用的语言名（LLM 认自然语言，不认 en/zh 这类代码）。
+_LANGUAGE_NAMES = {"zh": "中文", "en": "英文", "ja": "日文", "ko": "韩文"}
+
+
+class OpenAICompatTranslator:
+    """OpenAI 兼容接口的在线翻译（`POST {base_url}/chat/completions`）。
+
+    只依赖这一条标准接口，所以上游可以是**任何**兼容实现 ——
+    自建网关（如 WorkBuddy2API 的「模型组」别名）、DeepSeek、Ollama、OpenAI 官方等。
+
+    ⚠️ 两个实测坑（2026-10-12 接 WorkBuddy2API 的 `model group` 时踩到）：
+
+    1. **`max_tokens` 必须给足**。上游很可能是**推理模型**，思考 token 会先吃掉预算：
+       给 64 时接口返回 HTTP 200，但 `message.content` 是**空串**
+       （`usage.completion_thinking_tokens == 64`、正文 0 token）。
+       这里给 2048，并对空译文**明确报错**而不是静默返回空串 ——
+       否则界面上表现为「翻译成功却没内容」，很难查。
+    2. **模型名要原样传**。自建网关的别名可能含空格（如 `model group`），
+       首尾空白可以去掉，但中间的空格绝不能动。
+    """
+
+    name = "openai"
+    TIMEOUT = 30
+    MAX_TOKENS = 2048
+
+    def __init__(self, base_url: str, api_key: str, model: str,
+                 source_lang: str = "en", target_lang: str = "zh") -> None:
+        if not base_url:
+            raise TranslateError("OpenAI 兼容翻译需要在设置里填「接口地址」")
+        if not model:
+            raise TranslateError("OpenAI 兼容翻译需要在设置里填「模型」")
+        self.base_url = base_url.strip().rstrip("/")
+        self.api_key = api_key.strip()
+        self.model = model.strip()
+        self.source_lang = source_lang
+        self.target_lang = target_lang
+
+    def translate(self, text: str) -> str:
+        import requests
+
+        target = _LANGUAGE_NAMES.get(self.target_lang, self.target_lang)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        f"你是专业翻译引擎。把用户提供的文本翻译成{target}。"
+                        "只输出译文本身：不要解释、不要加引号、不要重复原文。"
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0,
+            "max_tokens": self.MAX_TOKENS,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=self.TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            raise TranslateError(f"在线翻译请求失败：{exc}") from exc
+
+        choices = data.get("choices") or []
+        if not choices:
+            preview = json.dumps(data, ensure_ascii=False)[:200]
+            raise TranslateError(f"接口没有返回译文：{preview}")
+
+        content = ((choices[0].get("message") or {}).get("content") or "").strip()
+        if not content:
+            raise TranslateError(
+                "接口返回了空译文 —— 上游若是推理模型，通常是 max_tokens 被思考占满"
+            )
+        return content
+
+
 #: 离线翻译器缓存。模型加载约 0.2s，缓存后重复翻译不再重新加载，
 #: 也避免并发翻译时重复占用内存。
 _offline_cache: dict[str, OfflineTranslator] = {}
@@ -235,11 +328,22 @@ class TranslationService:
 
     def _online(self, text: str, section: dict) -> TranslationResult:
         provider = section.get("online_provider", "youdao")
+        pair = self._pair_for(text)
+        src, dst = models.PAIRS[pair]
+
+        if provider == "openai":
+            translator = OpenAICompatTranslator(
+                section.get("online_base_url", ""),
+                section.get("online_api_key", ""),
+                section.get("online_model", ""),
+                source_lang=src,
+                target_lang=dst,
+            )
+            return TranslationResult(translator.translate(text), "openai", src, dst)
+
         if provider != "youdao":
             raise TranslateError(f"暂不支持的在线服务商：{provider}")
 
-        pair = self._pair_for(text)
-        src, dst = models.PAIRS[pair]
         translator = YoudaoTranslator(
             section.get("online_app_key", ""),
             section.get("online_app_secret", ""),

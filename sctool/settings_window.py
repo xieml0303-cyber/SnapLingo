@@ -35,6 +35,8 @@ MODE_VALUES = ("offline", "online", "auto")
 MODE_LABELS = ("离线", "在线", "自动")
 PAIR_VALUES = ("", "en_zh", "zh_en")
 PAIR_LABELS = ("自动判断", "英 → 中", "中 → 英")
+PROVIDER_VALUES = ("youdao", "openai")
+PROVIDER_LABELS = ("有道智云", "OpenAI 兼容")
 
 
 def _index_of(values: tuple, current) -> int:
@@ -196,16 +198,25 @@ class SettingsWindow:
 
     def _row(self, grid: tk.Frame, index: int, label: str) -> tk.Frame:
         s = self._s
-        tk.Label(
+        label_widget = tk.Label(
             grid,
             text=label,
             font=theme.FONT_BODY,
             bg=theme.N50,
             fg=theme.N700,
             anchor="w",
-        ).grid(row=index, column=0, sticky="w", padx=(0, theme.pxf(s, 14)), pady=(0, theme.pxf(s, 8)))
+        )
+        label_widget.grid(
+            row=index, column=0, sticky="w",
+            padx=(0, theme.pxf(s, 14)), pady=(0, theme.pxf(s, 8)),
+        )
         cell = tk.Frame(grid, bg=theme.N50)
         cell.grid(row=index, column=1, sticky="w", pady=(0, theme.pxf(s, 8)))
+        #: 记下整行的两个 widget，供 `_apply_provider_visibility()` 动态显隐。
+        #: `grid_remove()` 会记住原位置，恢复时直接 `grid()` 就行。
+        if not hasattr(grid, "_row_widgets"):
+            grid._row_widgets = {}
+        grid._row_widgets[index] = (label_widget, cell)
         return cell
 
     def _hint(self, parent: tk.Misc, text: str) -> None:
@@ -253,14 +264,78 @@ class SettingsWindow:
         )
         self.pair_seg.pack(side="left")
 
-        cell = self._row(grid, 3, "有道 AppKey")
-        self.key_var = tk.StringVar(value=section.get("online_app_key", ""))
-        widgets.Entry(cell, textvariable=self.key_var, width=260, scale=s).pack(side="left")
+        # ---- 在线服务商：决定下面显示哪一组字段 ----
+        cell = self._row(grid, 3, "在线服务商")
+        self.provider_seg = widgets.SegmentedControl(
+            cell,
+            list(PROVIDER_LABELS),
+            self._on_provider_change,
+            value=_index_of(PROVIDER_VALUES, section.get("online_provider", "openai")),
+            scale=s,
+        )
+        self.provider_seg.pack(side="left")
         self._hint(cell, "仅「在线 / 自动」模式需要")
 
-        cell = self._row(grid, 4, "有道 AppSecret")
-        self.secret_var = tk.StringVar(value=section.get("online_app_secret", ""))
-        widgets.Entry(cell, textvariable=self.secret_var, width=260, scale=s).pack(side="left")
+        # ---- OpenAI 兼容那一组（行 4~6）----
+        cell = self._row(grid, 4, "接口地址")
+        self.baseurl_var = tk.StringVar(value=section.get("online_base_url", ""))
+        widgets.Entry(cell, textvariable=self.baseurl_var, width=260, scale=s).pack(side="left")
+        self._hint(cell, "如 http://127.0.0.1:7863/v1")
+
+        cell = self._row(grid, 5, "模型")
+        self.model_var = tk.StringVar(value=section.get("online_model", ""))
+        widgets.Entry(cell, textvariable=self.model_var, width=260, scale=s).pack(side="left")
+        self._hint(cell, "原样传给上游，如 model group")
+
+        cell = self._row(grid, 6, "API Key")
+        self.apikey_var = tk.StringVar(value=section.get("online_api_key", ""))
+        widgets.Entry(cell, textvariable=self.apikey_var, width=260, scale=s).pack(side="left")
+        self._hint(cell, "本地网关通常可留空")
+
+        # ---- 有道智云那一组（行 7~8）----
+        cell = self._row(grid, 7, "有道 AppKey")
+        self.youdao_key_var = tk.StringVar(value=section.get("online_app_key", ""))
+        widgets.Entry(cell, textvariable=self.youdao_key_var, width=260, scale=s).pack(side="left")
+
+        cell = self._row(grid, 8, "有道 AppSecret")
+        self.youdao_secret_var = tk.StringVar(value=section.get("online_app_secret", ""))
+        widgets.Entry(cell, textvariable=self.youdao_secret_var, width=260, scale=s).pack(side="left")
+
+        self._recognition_grid = grid
+        self._apply_provider_visibility(self.provider_seg.value)
+
+    #: 行号 → 属于哪一组（切换在线服务商时决定显示谁）
+    _OPENAI_ROWS = (4, 5, 6)
+    _YOUDAO_ROWS = (7, 8)
+
+    def _on_provider_change(self, index: int) -> None:
+        self._apply_provider_visibility(index)
+
+    def _apply_provider_visibility(self, index: int) -> None:
+        """只显示当前服务商自己的字段。
+
+        选「OpenAI 兼容」就藏掉有道的 AppKey/AppSecret；选「有道智云」就藏掉
+        接口地址 / 模型 / API Key —— 免得两套字段混排，让人不知道该填哪几个。
+        """
+        rows = getattr(self._recognition_grid, "_row_widgets", {})
+        is_openai = PROVIDER_VALUES[index] == "openai"
+        for row_index in self._OPENAI_ROWS:
+            self._toggle_row(rows, row_index, is_openai)
+        for row_index in self._YOUDAO_ROWS:
+            self._toggle_row(rows, row_index, not is_openai)
+
+    @staticmethod
+    def _toggle_row(rows: dict, index: int, visible: bool) -> None:
+        pair = rows.get(index)
+        if not pair:
+            return
+        label, cell = pair
+        if visible:
+            label.grid()
+            cell.grid()
+        else:
+            label.grid_remove()
+            cell.grid_remove()
 
     # ---------- 分区：离线模型 ----------
 
@@ -566,8 +641,12 @@ class SettingsWindow:
         section = self.cfg.setdefault("translate", {})
         section["mode"] = MODE_VALUES[self.mode_seg.value]
         section["offline_pair"] = PAIR_VALUES[self.pair_seg.value]
-        section["online_app_key"] = self.key_var.get().strip()
-        section["online_app_secret"] = self.secret_var.get().strip()
+        section["online_provider"] = PROVIDER_VALUES[self.provider_seg.value]
+        section["online_base_url"] = self.baseurl_var.get().strip()
+        section["online_model"] = self.model_var.get().strip()
+        section["online_api_key"] = self.apikey_var.get().strip()
+        section["online_app_key"] = self.youdao_key_var.get().strip()
+        section["online_app_secret"] = self.youdao_secret_var.get().strip()
         self.cfg["save_dir"] = self.dir_var.get().strip()
         self.cfg["auto_copy_text"] = bool(self.autocopy_var.get())
         self.cfg["show_tray"] = bool(self.tray_var.get())
